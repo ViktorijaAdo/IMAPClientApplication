@@ -1,4 +1,5 @@
 ﻿using System;
+using System.IO;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -46,16 +47,17 @@ namespace EmailClient
         {
             TcpClient connection1 = new TcpClient();
             connection1.ConnectAsync(m_serverDomain, 143);
+            System.Threading.Thread.Sleep(1000);
             if (connection1.Connected)
             {
-                SslStream stream = new SslStream(connection1.GetStream());
-                stream.AuthenticateAsClient(m_serverDomain);
+                NetworkStream stream = connection1.GetStream();
                 String response = GetResponse(stream);
-                if (!response.StartsWith("* OK"))
+                if (!response.Contains("OK"))
                     return false;
                 if (TryStartWithTSL(stream))
                 {
-                    m_connectionStream = stream;
+                    m_connectionStream = new SslStream(stream);
+                    m_connectionStream.AuthenticateAsClient(m_serverDomain);
                     m_tcpConnection = connection1;
                     return true;
                 }
@@ -68,10 +70,9 @@ namespace EmailClient
                 SslStream stream = new SslStream(connection2.GetStream());
                 stream.AuthenticateAsClient(m_serverDomain);
                 String response = GetResponse(stream);
-                if (!response.StartsWith("* OK"))
+                if (!response.Contains("OK"))
                     return false;
 
-                TryStartWithTSL(stream);
                 m_connectionStream = stream;
                 m_tcpConnection = connection2;
                 return true;
@@ -79,7 +80,7 @@ namespace EmailClient
             return false;
         }
 
-        private bool TryStartWithTSL(SslStream stream)
+        private bool TryStartWithTSL(Stream stream)
         {
             SendCommand(stream, "CAPABILITY");
             String response = GetResponse(stream);
@@ -104,7 +105,7 @@ namespace EmailClient
             return 0;
         }
 
-        private int SendCommand(SslStream stream, String command)
+        private int SendCommand(Stream stream, String command)
         {
             String serverCommand = "V" + tagNumber++.ToString() + " " + command + "\r\n";
             stream.Write(Encoding.ASCII.GetBytes(serverCommand), 0, serverCommand.Length);
@@ -128,7 +129,7 @@ namespace EmailClient
             return response.ToString();
         }
 
-        public String GetResponse(SslStream stream)
+        public String GetResponse(Stream stream)
         {
             if (stream == null)
                 return null;
