@@ -27,6 +27,21 @@ namespace EmailClient
             return true;
         }
 
+        public bool Disconnect()
+        {
+            return connection.Disconnect();
+        }
+
+        public List<String>GetInboxList()
+        {
+            List<String> inboxes = new List<string>(connection.GetInboxList().Split('*'));
+            foreach(string inbox in inboxes)
+            {
+
+            }
+            return inboxes;
+        }
+
     }
 
 
@@ -36,7 +51,7 @@ namespace EmailClient
         TcpClient m_tcpConnection = null;
         String m_serverDomain = null;
         SslStream m_connectionStream = null;
-        long tagNumber = 1;
+        long m_tagNumber = 1;
 
         public IMAPClientConnection(String serverDomainName)
         {
@@ -48,39 +63,54 @@ namespace EmailClient
             TcpClient connection1 = new TcpClient();
             connection1.ConnectAsync(m_serverDomain, 143);
             System.Threading.Thread.Sleep(1000);
-            if (connection1.Connected)
+
+            TcpClient connection2 = new TcpClient();
+            int numberOfTries = 0;
+            while (true)
             {
-                NetworkStream stream = connection1.GetStream();
-                String response = GetResponse(stream);
-                if (!response.Contains("OK"))
-                    return false;
-                if (TryStartWithTSL(stream))
+                numberOfTries++;
+                if (connection1.Connected)
                 {
-                    m_connectionStream = new SslStream(stream);
-                    m_connectionStream.AuthenticateAsClient(m_serverDomain);
-                    m_tcpConnection = connection1;
+                    NetworkStream stream = connection1.GetStream();
+                    String response = GetResponse(stream);
+                    if (!response.Contains("OK"))
+                        return false;
+                    if (TryStartWithTSL(stream))
+                    {
+                        m_connectionStream = new SslStream(stream);
+                        m_connectionStream.AuthenticateAsClient(m_serverDomain);
+                        m_tcpConnection = connection1;
+                        return true;
+                    }
+                    else
+                    {
+                        connection1.Close();
+                    }
+                }
+
+                if (numberOfTries == 1)
+                    connection2.ConnectAsync(m_serverDomain, 993);
+
+                if (connection2.Connected && !connection1.Connected)
+                {
+                    connection1.Close();
+                    SslStream stream = new SslStream(connection2.GetStream());
+                    stream.AuthenticateAsClient(m_serverDomain);
+                    String response = GetResponse(stream);
+                    if (!response.Contains("OK"))
+                        return false;
+
+                    m_connectionStream = stream;
+                    m_tcpConnection = connection2;
                     return true;
                 }
-            }
-            TcpClient connection2 = new TcpClient(m_serverDomain, 993);
 
-            if (connection2.Connected && !connection1.Connected)
-            {
-                connection1.Close();
-                SslStream stream = new SslStream(connection2.GetStream());
-                stream.AuthenticateAsClient(m_serverDomain);
-                String response = GetResponse(stream);
-                if (!response.Contains("OK"))
+                if (numberOfTries == -1)
                     return false;
-
-                m_connectionStream = stream;
-                m_tcpConnection = connection2;
-                return true;
             }
-            return false;
         }
 
-        private bool TryStartWithTSL(Stream stream)
+        private bool TryStartWithTSL(NetworkStream stream)
         {
             SendCommand(stream, "CAPABILITY");
             String response = GetResponse(stream);
@@ -94,23 +124,30 @@ namespace EmailClient
             return true;
         }
 
-        public int SendCommand(String command)
+        public String GetNextCommandId()
         {
-            if(m_tcpConnection == null || m_connectionStream == null || !m_tcpConnection.Connected)
-                return 1;
-
-            String serverCommand = "V" + tagNumber++.ToString() + " " + command + "\r\n";
-            m_connectionStream.Write(Encoding.ASCII.GetBytes(serverCommand), 0, serverCommand.Length);
-            m_connectionStream.Flush();
-            return 0;
+            return "V" + m_tagNumber++;
         }
 
-        private int SendCommand(Stream stream, String command)
+        public String SendCommand(String command)
         {
-            String serverCommand = "V" + tagNumber++.ToString() + " " + command + "\r\n";
+            if(m_tcpConnection == null || m_connectionStream == null || !m_tcpConnection.Connected)
+                return null;
+
+            String commandId = GetNextCommandId();
+            String serverCommand = commandId + " " + command + "\r\n";
+            m_connectionStream.Write(Encoding.ASCII.GetBytes(serverCommand), 0, serverCommand.Length);
+            m_connectionStream.Flush();
+            return commandId;
+        }
+
+        private String SendCommand(Stream stream, String command)
+        {
+            String commandId = GetNextCommandId();
+            String serverCommand = commandId + " " + command + "\r\n";
             stream.Write(Encoding.ASCII.GetBytes(serverCommand), 0, serverCommand.Length);
             stream.Flush();
-            return 0;
+            return commandId;
         }
 
         public String GetResponse()
@@ -145,10 +182,11 @@ namespace EmailClient
             return response.ToString();
         }
 
-        internal bool AuthenticateUser(string username, string password)
+        public bool AuthenticateUser(string username, string password)
         {
             if (m_tcpConnection == null || m_connectionStream == null)
                 return false;
+
             SendCommand(m_connectionStream, "CAPABILITY");
             String response = GetResponse();
             if (!response.Contains("AUTH=PLAIN") || !response.Contains("OK"))
@@ -160,6 +198,30 @@ namespace EmailClient
                 return false;
 
             return true;
+        }
+
+        public bool Disconnect()
+        {
+            if (m_tcpConnection == null || m_connectionStream == null)
+                return false;
+
+            SendCommand("LOGOUT");
+            String response = GetResponse();
+            if (!response.Contains("BYE") || !response.Contains("OK"))
+                return false;
+
+            m_tcpConnection.Close();
+            m_tcpConnection = null;
+            m_connectionStream = null;
+
+            return true;
+        }
+
+        public String GetInboxList()
+        {
+            String commandId = SendCommand("LIST \"\" *");
+            String response = GetResponse();
+            return response.Substring(0, response.IndexOf(commandId));
         }
     }
 }
