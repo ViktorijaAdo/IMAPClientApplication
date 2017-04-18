@@ -9,6 +9,25 @@ using System.Net.Security;
 
 namespace EmailClient
 {
+    struct EmailInbox
+    {
+        public EmailInbox(bool isSelectable, String name, List<EmailInbox> childs)
+        {
+            this.isSelectable = isSelectable;
+            this.name = name;
+            this.childs = childs;
+        }
+        public EmailInbox(bool isSelectable, String name)
+        {
+            this.isSelectable = isSelectable;
+            this.name = name;
+            this.childs = null;
+        }
+        public bool isSelectable;
+        public String name;
+        public List<EmailInbox> childs;
+    }
+
     class IMAPClient
     {
         IMAPClientConnection connection = null;
@@ -34,10 +53,16 @@ namespace EmailClient
 
         public List<String>GetInboxList()
         {
-            List<String> inboxes = new List<string>(connection.GetInboxList().Split('*'));
+            List<String> inboxes = new List<String>(connection.GetInboxList().Split('*'));
+            List<EmailInbox> emailInboxes = new List<EmailInbox>();
             foreach(string inbox in inboxes)
             {
+                EmailInbox emailInbox = new EmailInbox();
+                emailInbox.isSelectable = inbox.Contains(@"\NoSelect") ? false : true;
+                String name = inbox.Substring(inbox.IndexOf("\"/\"") + 4);
+                emailInbox.name = name;
 
+                emailInboxes.Add(emailInbox);
             }
             return inboxes;
         }
@@ -157,11 +182,11 @@ namespace EmailClient
 
             byte[] buffer = new byte[STREAM_SIZE];
             int symbolsCount = m_connectionStream.Read(buffer, 0, STREAM_SIZE);
-            StringBuilder response = new StringBuilder(Encoding.ASCII.GetString(buffer));
+            StringBuilder response = new StringBuilder(Encoding.UTF7.GetString(buffer));
             while (symbolsCount == STREAM_SIZE)
             {
                 symbolsCount = m_connectionStream.Read(buffer, 0, STREAM_SIZE);
-                response.Append(Encoding.ASCII.GetString(buffer));
+                response.Append(Encoding.UTF7.GetString(buffer));
             }
             return response.ToString();
         }
@@ -173,11 +198,11 @@ namespace EmailClient
 
             byte[] buffer = new byte[STREAM_SIZE];
             int symbolsCount = stream.Read(buffer, 0, STREAM_SIZE);
-            StringBuilder response = new StringBuilder(Encoding.ASCII.GetString(buffer));
+            StringBuilder response = new StringBuilder(Encoding.UTF7.GetString(buffer));
             while (symbolsCount == STREAM_SIZE)
             {
                 symbolsCount = stream.Read(buffer, 0, STREAM_SIZE);
-                response.Append(Encoding.ASCII.GetString(buffer));
+                response.Append(Encoding.UTF7.GetString(buffer));
             }
             return response.ToString();
         }
