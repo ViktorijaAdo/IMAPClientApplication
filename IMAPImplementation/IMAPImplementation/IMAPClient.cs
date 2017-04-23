@@ -9,7 +9,7 @@ using System.Net.Security;
 
 namespace EmailClient
 {
-    struct EmailInbox
+    public struct EmailInbox
     {
         public EmailInbox(bool isSelectable, String name, List<EmailInbox> childs)
         {
@@ -31,7 +31,7 @@ namespace EmailClient
         public string Flags { get; internal set; }
     }
 
-    class IMAPClient
+    public class IMAPClient
     {
         IMAPClientConnection connection = null;
         public IMAPClient(String serverDomainName)
@@ -54,7 +54,7 @@ namespace EmailClient
             return connection.Disconnect();
         }
 
-        public List<String>GetInboxList()
+        public List<EmailInbox> GetInboxList()
         {
             char delimiter;
             List<String> inboxes = new List<String>(connection.GetRootInboxList(out delimiter).Split(new String[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries));
@@ -70,6 +70,7 @@ namespace EmailClient
                     {
                         EmailInbox emailSubInbox = new EmailInbox();
                         ParseInboxInfo(subInbox, ref emailSubInbox);
+                        emailSubInbox.Name = emailSubInbox.Name.Substring(emailSubInbox.Name.IndexOf(delimiter)+1);
                         emailInboxes.Add(emailSubInbox);
                     }
                 }
@@ -78,7 +79,7 @@ namespace EmailClient
                     emailInboxes.Add(emailInbox);
                 }
             }
-            return inboxes;
+            return emailInboxes;
         }
 
         private void ParseInboxInfo(String inbox, ref EmailInbox emailInbox)
@@ -270,16 +271,17 @@ namespace EmailClient
         public String GetRootInboxList(out char hierarchyDelimiter)
         {
             SendCommand("LIST \"\" \"\"");
-            String[] delimiterResponse = GetResponse().Split(' ');
-            hierarchyDelimiter = delimiterResponse[3].ToCharArray()[1];
-            String commandId = SendCommand("LIST \"" + hierarchyDelimiter + "\" %");
+            String delimiterResponse = GetResponse();
+            delimiterResponse = delimiterResponse.Substring(delimiterResponse.IndexOf(')') + 2);
+            hierarchyDelimiter = delimiterResponse.ToCharArray()[1];
+            String commandId = SendCommand("LIST \"\" %");
             String response = GetResponse();
             return response.Substring(0, response.IndexOf(commandId));
         }
 
         public String GetInboxList(String rootName, char hierarchyDelimiter)
         {
-            String commandId = SendCommand("LIST \"" + hierarchyDelimiter + "\" \"" + rootName + hierarchyDelimiter + "%\"");
+            String commandId = SendCommand("LIST \"\" \"" + rootName + hierarchyDelimiter + "%\"");
             String response = GetResponse();
             return response.Substring(0, response.IndexOf(commandId));
         }
