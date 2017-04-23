@@ -13,19 +13,22 @@ namespace EmailClient
     {
         public EmailInbox(bool isSelectable, String name, List<EmailInbox> childs)
         {
-            this.isSelectable = isSelectable;
-            this.name = name;
-            this.childs = childs;
+            IsSelectable = isSelectable;
+            Name = name;
+            Childs = childs;
+            Flags = null;
         }
         public EmailInbox(bool isSelectable, String name)
         {
-            this.isSelectable = isSelectable;
-            this.name = name;
-            this.childs = null;
+            IsSelectable = isSelectable;
+            Name = name;
+            Childs = null;
+            Flags = null;
         }
-        public bool isSelectable;
-        public String name;
-        public List<EmailInbox> childs;
+        public bool IsSelectable { get; set; }
+        public String Name { get; set; }
+        public List<EmailInbox> Childs { get; set; }
+        public string Flags { get; internal set; }
     }
 
     class IMAPClient
@@ -53,20 +56,38 @@ namespace EmailClient
 
         public List<String>GetInboxList()
         {
-            List<String> inboxes = new List<String>(connection.GetInboxList().Split('*'));
+            char delimiter;
+            List<String> inboxes = new List<String>(connection.GetRootInboxList(out delimiter).Split(new String[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries));
             List<EmailInbox> emailInboxes = new List<EmailInbox>();
             foreach(string inbox in inboxes)
             {
                 EmailInbox emailInbox = new EmailInbox();
-                emailInbox.isSelectable = inbox.Contains(@"\NoSelect") ? false : true;
-                String name = inbox.Substring(inbox.IndexOf("\"/\"") + 4);
-                emailInbox.name = name;
-
-                emailInboxes.Add(emailInbox);
+                ParseInboxInfo(inbox, ref emailInbox);
+                if (emailInbox.Flags.Contains(@"\Noselect"))
+                {
+                    List<String> subInboxes = new List<String>(connection.GetInboxList(emailInbox.Name, delimiter).Split(new String[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries));
+                    foreach (string subInbox in subInboxes)
+                    {
+                        EmailInbox emailSubInbox = new EmailInbox();
+                        ParseInboxInfo(subInbox, ref emailSubInbox);
+                        emailInboxes.Add(emailSubInbox);
+                    }
+                }
+                else
+                {
+                    emailInboxes.Add(emailInbox);
+                }
             }
             return inboxes;
         }
 
+        private void ParseInboxInfo(String inbox, ref EmailInbox emailInbox)
+        {
+            String inboxInfo = inbox.Substring(inbox.IndexOf('('));
+            emailInbox.Flags = inboxInfo.Substring(1, inboxInfo.IndexOf(')') - 1);
+            inboxInfo = inboxInfo.Substring(inboxInfo.IndexOf('\"'));
+            emailInbox.Name = inboxInfo.Split(' ')[1].Trim('\"');
+        }
     }
 
 
@@ -181,14 +202,16 @@ namespace EmailClient
                 return null;
 
             byte[] buffer = new byte[STREAM_SIZE];
-            int symbolsCount = m_connectionStream.Read(buffer, 0, STREAM_SIZE);
-            StringBuilder response = new StringBuilder(Encoding.UTF7.GetString(buffer));
-            while (symbolsCount == STREAM_SIZE)
+            StringBuilder response = new StringBuilder();
+            String responseString;
+            do
             {
-                symbolsCount = m_connectionStream.Read(buffer, 0, STREAM_SIZE);
-                response.Append(Encoding.UTF7.GetString(buffer));
-            }
-            return response.ToString();
+                int symbolsCount = m_connectionStream.Read(buffer, 0, STREAM_SIZE);
+                String bufferString = Encoding.UTF7.GetString(buffer, 0, symbolsCount);
+                response.Append(bufferString);
+                responseString = response.ToString();
+            } while (!responseString.Contains("OK") && !responseString.Contains("NO") && !responseString.Contains("BAD"));
+            return responseString;
         }
 
         public String GetResponse(Stream stream)
@@ -197,13 +220,15 @@ namespace EmailClient
                 return null;
 
             byte[] buffer = new byte[STREAM_SIZE];
-            int symbolsCount = stream.Read(buffer, 0, STREAM_SIZE);
-            StringBuilder response = new StringBuilder(Encoding.UTF7.GetString(buffer));
-            while (symbolsCount == STREAM_SIZE)
+            StringBuilder response = new StringBuilder();
+            String responseString;
+            do
             {
-                symbolsCount = stream.Read(buffer, 0, STREAM_SIZE);
+                stream.Read(buffer, 0, STREAM_SIZE);
                 response.Append(Encoding.UTF7.GetString(buffer));
-            }
+                responseString = response.ToString();
+            } while (!responseString.Contains("OK") && !responseString.Contains("NO") && !responseString.Contains("BAD"));
+
             return response.ToString();
         }
 
@@ -242,9 +267,19 @@ namespace EmailClient
             return true;
         }
 
-        public String GetInboxList()
+        public String GetRootInboxList(out char hierarchyDelimiter)
         {
-            String commandId = SendCommand("LIST \"\" *");
+            SendCommand("LIST \"\" \"\"");
+            String[] delimiterResponse = GetResponse().Split(' ');
+            hierarchyDelimiter = delimiterResponse[3].ToCharArray()[1];
+            String commandId = SendCommand("LIST \"" + hierarchyDelimiter + "\" %");
+            String response = GetResponse();
+            return response.Substring(0, response.IndexOf(commandId));
+        }
+
+        public String GetInboxList(String rootName, char hierarchyDelimiter)
+        {
+            String commandId = SendCommand("LIST \"" + hierarchyDelimiter + "\" \"" + rootName + hierarchyDelimiter + "%\"");
             String response = GetResponse();
             return response.Substring(0, response.IndexOf(commandId));
         }
