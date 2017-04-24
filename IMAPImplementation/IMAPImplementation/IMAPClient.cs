@@ -6,9 +6,20 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Net.Sockets;
 using System.Net.Security;
+using IMAPImplementation;
 
 namespace EmailClient
 {
+    public struct Email
+    {
+        public String Title { get; set; }
+        public int ID { get; set; }
+
+        public String Sender { get; set; }
+
+        public String Text { get; set; }
+    }
+
     public struct EmailInbox
     {
         public EmailInbox(bool isSelectable, String name, List<EmailInbox> childs)
@@ -33,17 +44,17 @@ namespace EmailClient
 
     public class IMAPClient
     {
-        IMAPClientConnection connection = null;
+        IMAPClientConnection m_connection = null;
         public IMAPClient(String serverDomainName)
         {
-            connection = new IMAPClientConnection(serverDomainName);
+            m_connection = new IMAPClientConnection(serverDomainName);
         }
 
         public bool Connect(String username, String password)
         {
-            if (!connection.TryCreateConnectionWithServer())
+            if (!m_connection.TryCreateConnectionWithServer())
                 return false;
-            if (!connection.AuthenticateUser(username, password))
+            if (!m_connection.AuthenticateUser(username, password))
                 return false;
 
             return true;
@@ -51,22 +62,28 @@ namespace EmailClient
 
         public bool Disconnect()
         {
-            return connection.Disconnect();
+            return m_connection.Disconnect();
         }
 
         public List<EmailInbox> GetInboxList()
         {
-            char delimiter;
-            List<String> inboxes = new List<String>(connection.GetRootInboxList(out delimiter).Split(new String[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries));
             List<EmailInbox> emailInboxes = new List<EmailInbox>();
-            foreach(string inbox in inboxes)
+            char delimiter;
+            List<String> inboxes = m_connection.GetRootInboxList(out delimiter);
+            if (inboxes == null)
+                return emailInboxes;
+
+            foreach(String inbox in inboxes)
             {
                 EmailInbox emailInbox = new EmailInbox();
                 ParseInboxInfo(inbox, ref emailInbox);
                 if (emailInbox.Flags.Contains(@"\Noselect"))
                 {
-                    List<String> subInboxes = new List<String>(connection.GetInboxList(emailInbox.Name, delimiter).Split(new String[] { "\r\n" }, StringSplitOptions.RemoveEmptyEntries));
-                    foreach (string subInbox in subInboxes)
+                    List<String> subInboxes = m_connection.GetInboxList(emailInbox.Name, delimiter);
+                    if (subInboxes == null)
+                        continue;
+
+                    foreach (String subInbox in subInboxes)
                     {
                         EmailInbox emailSubInbox = new EmailInbox();
                         ParseInboxInfo(subInbox, ref emailSubInbox);
@@ -80,6 +97,54 @@ namespace EmailClient
                 }
             }
             return emailInboxes;
+        }
+
+        internal void GetUpdateEmailWithText(ref Email selectedEmail)
+        {
+            selectedEmail.Text = m_connection.GetEmailText(selectedEmail.ID);
+        }
+
+        public List<Email> GetEmailList(String selectedInbox)
+        {
+            List<Email> emails = new List<Email>();
+            if (!m_connection.SelectInbox(selectedInbox))
+                return emails;
+
+            List<String> returnedEmails = m_connection.GetEmailList();
+            if (returnedEmails == null)
+                return emails;
+            Email newEmail = new Email();
+            foreach (String emailinfo in returnedEmails)
+            {
+                if (emailinfo.StartsWith("* "))
+                {
+                    emails.Add(newEmail);
+                    newEmail = new Email();
+                }
+                ParseEmailInfo(emailinfo, ref newEmail);
+            }
+            emails.RemoveAt(0);
+            return emails;
+        }
+
+        private void ParseEmailInfo(String emailInfo, ref Email email)
+        {
+            String temporary;
+            if (emailInfo.Contains("UID"))
+            {
+                temporary = emailInfo.Substring(emailInfo.IndexOf("UID")+4);
+                email.ID = Int32.Parse(temporary.Substring(0, temporary.IndexOf(' ')));
+            }
+            if (emailInfo.Contains("Subject:"))
+            {
+                temporary = emailInfo.Substring(emailInfo.IndexOf("Subject:")+8);
+                email.Title = temporary.Substring(0);
+            }
+            if (emailInfo.Contains("From:"))
+            {
+                temporary = emailInfo.Substring(emailInfo.IndexOf("From:")+5);
+                email.Sender = temporary.Substring(0);
+            }
         }
 
         private void ParseInboxInfo(String inbox, ref EmailInbox emailInbox)
@@ -119,8 +184,8 @@ namespace EmailClient
                 if (connection1.Connected)
                 {
                     NetworkStream stream = connection1.GetStream();
-                    String response = GetResponse(stream);
-                    if (!response.Contains("OK"))
+                    List<String> response = GetResponse(stream, null);
+                    if (!response.ElementAt(response.Count-1).Contains("OK"))
                         return false;
                     if (TryStartWithTSL(stream))
                     {
@@ -143,8 +208,8 @@ namespace EmailClient
                     connection1.Close();
                     SslStream stream = new SslStream(connection2.GetStream());
                     stream.AuthenticateAsClient(m_serverDomain);
-                    String response = GetResponse(stream);
-                    if (!response.Contains("OK"))
+                    List<String> response = GetResponse(stream, null);
+                    if (!response.ElementAt(response.Count - 1).Contains("OK"))
                         return false;
 
                     m_connectionStream = stream;
@@ -159,13 +224,14 @@ namespace EmailClient
 
         private bool TryStartWithTSL(NetworkStream stream)
         {
-            SendCommand(stream, "CAPABILITY");
-            String response = GetResponse(stream);
-            if (!response.Contains("STARTTLS") || !response.Contains("OK"))
+            String commandId = SendCommand(stream, "CAPABILITY");
+            List<String> response = GetResponse(stream, commandId);
+            if (!response.ElementAt(response.Count - 1).Contains("OK") || !response.ElementAt(response.Count - 1).Contains("STARTTLS"))
                 return false;
 
-            SendCommand(stream, "STARTTLS");
-            if (!GetResponse(stream).Contains("OK"))
+            commandId = SendCommand(stream, "STARTTLS");
+            response = GetResponse(stream, commandId);
+            if (!response.ElementAt(response.Count - 1).Contains("OK"))
                 return false;
 
             return true;
@@ -183,7 +249,8 @@ namespace EmailClient
 
             String commandId = GetNextCommandId();
             String serverCommand = commandId + " " + command + "\r\n";
-            m_connectionStream.Write(Encoding.ASCII.GetBytes(serverCommand), 0, serverCommand.Length);
+            //StreamWriter sw = new StreamWriter(m_connectionStream);
+            m_connectionStream.Write(Encoding.ASCII.GetBytes(serverCommand), 0, serverCommand.Length);//Write(serverCommand, 0, serverCommand.Length);
             m_connectionStream.Flush();
             return commandId;
         }
@@ -192,45 +259,45 @@ namespace EmailClient
         {
             String commandId = GetNextCommandId();
             String serverCommand = commandId + " " + command + "\r\n";
-            stream.Write(Encoding.ASCII.GetBytes(serverCommand), 0, serverCommand.Length);
+            //StreamWriter sw = new StreamWriter(stream);
+            stream.Write(Encoding.ASCII.GetBytes(serverCommand), 0, serverCommand.Length);//Write(serverCommand, 0, serverCommand.Length);
             stream.Flush();
             return commandId;
         }
 
-        public String GetResponse()
+        public List<String> GetResponse(String commandId)
         {
             if (m_connectionStream == null)
                 return null;
 
             byte[] buffer = new byte[STREAM_SIZE];
-            StringBuilder response = new StringBuilder();
+            StreamReader sr = new StreamReader(m_connectionStream);
+            List<String> response = new List<String>();
             String responseString;
             do
             {
-                int symbolsCount = m_connectionStream.Read(buffer, 0, STREAM_SIZE);
-                String bufferString = Encoding.UTF7.GetString(buffer, 0, symbolsCount);
-                response.Append(bufferString);
-                responseString = response.ToString();
-            } while (!responseString.Contains("OK") && !responseString.Contains("NO") && !responseString.Contains("BAD"));
-            return responseString;
+                responseString = sr.ReadLine();
+                response.Add(responseString);
+            } while (commandId != null && (!responseString.Contains(commandId) || (!responseString.Contains("OK") && !responseString.Contains("NO") && !responseString.Contains("BAD"))));
+            return response;
         }
 
-        public String GetResponse(Stream stream)
+        public List<String> GetResponse(Stream stream, String commandId)
         {
             if (stream == null)
                 return null;
 
             byte[] buffer = new byte[STREAM_SIZE];
-            StringBuilder response = new StringBuilder();
+            StreamReader sr = new StreamReader(stream);
+            List<String> response = new List<string>();
             String responseString;
             do
             {
-                stream.Read(buffer, 0, STREAM_SIZE);
-                response.Append(Encoding.UTF7.GetString(buffer));
-                responseString = response.ToString();
-            } while (!responseString.Contains("OK") && !responseString.Contains("NO") && !responseString.Contains("BAD"));
+                responseString = sr.ReadLine();
+                response.Add(responseString);
+            } while (commandId != null && (!responseString.Contains(commandId) || (!responseString.Contains("OK") && !responseString.Contains("NO") && !responseString.Contains("BAD"))));
 
-            return response.ToString();
+            return response;
         }
 
         public bool AuthenticateUser(string username, string password)
@@ -238,17 +305,24 @@ namespace EmailClient
             if (m_tcpConnection == null || m_connectionStream == null)
                 return false;
 
-            SendCommand(m_connectionStream, "CAPABILITY");
-            String response = GetResponse();
-            if (!response.Contains("AUTH=PLAIN") || !response.Contains("OK"))
+            String commandId = SendCommand(m_connectionStream, "CAPABILITY");
+            List<String> response = GetResponse(commandId);
+            if (!response.ElementAt(response.Count - 1).Contains("OK"))
                 return false;
 
-            SendCommand("LOGIN " + username + " " + password);
-            response = GetResponse();
-            if (!response.Contains("OK"))
-                return false;
+            foreach (String responseLine in response)
+            {
+                if (responseLine.Contains("AUTH=PLAIN"))
+                {
+                    commandId = SendCommand("LOGIN " + username + " " + password);
+                    response = GetResponse(commandId);
+                    if (!response.ElementAt(response.Count - 1).Contains("OK"))
+                        return false;
 
-            return true;
+                    return true;
+                }
+            }
+            return false;
         }
 
         public bool Disconnect()
@@ -256,9 +330,9 @@ namespace EmailClient
             if (m_tcpConnection == null || m_connectionStream == null)
                 return false;
 
-            SendCommand("LOGOUT");
-            String response = GetResponse();
-            if (!response.Contains("BYE") || !response.Contains("OK"))
+            String commandId = SendCommand("LOGOUT");
+            List<String> response = GetResponse(commandId);
+            if (!response.ElementAt(response.Count - 1).Contains("BYE") || !response.ElementAt(response.Count - 1).Contains("OK"))
                 return false;
 
             m_tcpConnection.Close();
@@ -268,22 +342,85 @@ namespace EmailClient
             return true;
         }
 
-        public String GetRootInboxList(out char hierarchyDelimiter)
+        public List<String> GetRootInboxList(out char hierarchyDelimiter)
         {
-            SendCommand("LIST \"\" \"\"");
-            String delimiterResponse = GetResponse();
-            delimiterResponse = delimiterResponse.Substring(delimiterResponse.IndexOf(')') + 2);
-            hierarchyDelimiter = delimiterResponse.ToCharArray()[1];
-            String commandId = SendCommand("LIST \"\" %");
-            String response = GetResponse();
-            return response.Substring(0, response.IndexOf(commandId));
+            List<String> response;
+            String commandId;
+            commandId = SendCommand("LIST \"\" \"\"");
+            response = GetResponse(commandId);
+            if (!response.ElementAt(response.Count - 1).Contains("OK"))
+            {
+                hierarchyDelimiter = '\0';
+                return null;
+            }
+
+            String responseLine = response.ElementAt(0);
+            responseLine = responseLine.Substring(responseLine.IndexOf(')') + 2);
+            hierarchyDelimiter = responseLine.ToCharArray()[1];
+
+            commandId = SendCommand("LIST \"\" %");
+
+            response = GetResponse(commandId);
+            if (!response.ElementAt(response.Count - 1).Contains("OK"))
+                return null;
+
+            response.RemoveAt(response.Count - 1);
+            return response;
         }
 
-        public String GetInboxList(String rootName, char hierarchyDelimiter)
+        public List<String> GetInboxList(String rootName, char hierarchyDelimiter)
         {
             String commandId = SendCommand("LIST \"\" \"" + rootName + hierarchyDelimiter + "%\"");
-            String response = GetResponse();
-            return response.Substring(0, response.IndexOf(commandId));
+            List<String> response = GetResponse(commandId);
+            if (!response.ElementAt(response.Count - 1).Contains("OK"))
+                return null;
+
+            response.RemoveAt(response.Count - 1);
+            return response;
         }
+
+        internal bool SelectInbox(String selectedInbox)
+        {
+            String commandId = SendCommand("SELECT " + selectedInbox);
+            List<String> response = GetResponse(commandId);
+            if (!response.ElementAt(response.Count - 1).Contains("OK"))
+                return false;
+
+            return true;
+        }
+
+        internal List<String> GetEmailList()
+        {
+            String commandId = SendCommand("FETCH 1:* (UID BODY.PEEK[HEADER.FIELDS (From Subject)])");
+            List<String> response = GetResponse(commandId);
+            if (!response.ElementAt(response.Count - 1).Contains("OK"))
+                return null;
+
+            response.RemoveAt(response.Count - 1);
+
+            return response;
+        }
+
+        internal String GetEmailText(int ID)
+        {
+            String commandId = SendCommand("FETCH "+ID+" BODY[text]");
+            List<String> response = GetResponse(commandId);
+            if (!response.ElementAt(response.Count - 1).Contains("OK"))
+                return null;
+
+            response.RemoveAt(response.Count - 1);
+            if(response.Count>0)
+                response.RemoveAt(0);
+
+            StringBuilder result = new StringBuilder();
+            foreach(String responseLine in response)
+            {
+                result.Append(responseLine);
+            }
+            return result.ToString();
+        }
+
+        [Flags]
+        public enum ResponseOptions { MessageId, From, Subject, To, Text }
     }
 }

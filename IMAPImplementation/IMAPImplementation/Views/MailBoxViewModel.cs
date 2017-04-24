@@ -9,9 +9,14 @@ using System.ComponentModel;
 
 namespace IMAPImplementation.Views
 {
-    public class MailBoxViewModel
+    public class MailBoxViewModel : INotifyPropertyChanged
     {
-        IMAPClient m_IMAPClient;
+        private IMAPClient m_IMAPClient;
+        private EmailInbox m_selectedInbox;
+        private Email m_selectedEmail;
+
+        public event PropertyChangedEventHandler PropertyChanged;
+
         public MailBoxViewModel(IMAPClient client)
         {
             m_IMAPClient = client;
@@ -22,6 +27,46 @@ namespace IMAPImplementation.Views
             Inboxes = new ObservableCollection<EmailInbox>(client.GetInboxList());
         }
 
-        public ObservableCollection<EmailInbox> Inboxes { get; set; }
+        public ObservableCollection<EmailInbox> Inboxes { get; private set; }
+
+        public EmailInbox SelectedInbox
+        {
+            get
+            {
+                return m_selectedInbox;
+            }
+            set
+            {
+                m_selectedInbox = value;
+                UpdateEmailList();
+            }
+        }
+
+        public ObservableCollection<Email> EmailList { get; private set; }
+
+        public Email SelectedEmail
+        {
+            get
+            {
+                return m_selectedEmail;
+            }
+            set
+            {
+                m_selectedEmail = value;
+                UpdateEmailText();
+            }
+        }
+
+        private void UpdateEmailList()
+        {
+            EmailList = new ObservableCollection<Email>(m_IMAPClient.GetEmailList(m_selectedInbox.Name));
+            PropertyChanged(this, new PropertyChangedEventArgs("EmailList"));
+        }
+
+        public void UpdateEmailText()
+        {
+            m_IMAPClient.GetUpdateEmailWithText(ref m_selectedEmail);
+            PropertyChanged(this, new PropertyChangedEventArgs("SelectedEmail"));
+        }
     }
 }

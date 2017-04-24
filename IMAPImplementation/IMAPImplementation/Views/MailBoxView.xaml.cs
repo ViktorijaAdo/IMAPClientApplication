@@ -24,7 +24,7 @@ namespace IMAPImplementation.Views
         IMAPClient client;
         public MailBoxView()
         {
-            IMAPClient client = new IMAPClient("outlook.office365.com");
+            IMAPClient client = new IMAPClient("imap.gmail.com");//("outlook.office365.com");
             client.Connect("username", "password");
             this.DataContext = new MailBoxViewModel(client);
             InitializeComponent();
