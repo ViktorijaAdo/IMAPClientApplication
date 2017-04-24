@@ -10,28 +10,26 @@ using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
 using System.Windows.Shapes;
 using EmailClient;
+using IMAPImplementation.Views;
 
-namespace IMAPImplementation.Views
+namespace IMAPImplementation
 {
     /// <summary>
-    /// Interaction logic for MailBoxView.xaml
+    /// Interaction logic for MailBoxWindow.xaml
     /// </summary>
-    public partial class MailBoxView : UserControl, IDisposable
+    public partial class MailBoxWindow : Window
     {
         IMAPClient m_client = null;
-        public MailBoxView(IMAPClient client)
+        MailBoxView m_view = null;
+        public MailBoxWindow(IMAPClient client)
         {
             m_client = client;
-            this.DataContext = new MailBoxViewModel(client);
+            m_view = new MailBoxView(client);
             InitializeComponent();
-        }
-
-        public void Dispose()
-        {
-            m_client.Disconnect();
+            this.RootGrid.Children.Add(m_view);
+            this.Show();
         }
     }
 }

@@ -17,21 +17,25 @@ using EmailClient;
 namespace IMAPImplementation.Views
 {
     /// <summary>
-    /// Interaction logic for MailBoxView.xaml
+    /// Interaction logic for LoginView.xaml
     /// </summary>
-    public partial class MailBoxView : UserControl, IDisposable
+    public partial class LoginView : UserControl
     {
-        IMAPClient m_client = null;
-        public MailBoxView(IMAPClient client)
+        public LoginView()
         {
-            m_client = client;
-            this.DataContext = new MailBoxViewModel(client);
             InitializeComponent();
         }
 
-        public void Dispose()
+        private void button_Click(object sender, RoutedEventArgs e)
         {
-            m_client.Disconnect();
+            LoginView view = this as LoginView;
+            
+            IMAPClient client = new IMAPClient(view.Domain.Text);
+            if (client.Connect(view.Username.Text, passwordBox.Password))
+            {
+                MailBoxWindow mailBox = new MailBoxWindow(client);
+                App.Current.MainWindow = mailBox;
+            }
         }
     }
 }
